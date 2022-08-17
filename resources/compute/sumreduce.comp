@@ -1,0 +1,24 @@
+#version 460
+
+layout(local_size_x=2, local_size_y=2) in;
+layout(rgba32f, binding=0) readonly uniform image2D level_READ;
+layout(rgba32f, binding=1) writeonly uniform image2D level_WRITE;
+
+void main(){
+
+    ivec2 texelPos = ivec2(gl_GlobalInvocationID.xy);
+
+    ivec2 mul_pos = texelPos*2;
+    ivec2 dx = ivec2(1, 0);
+    ivec2 dy = ivec2(0, 1);
+
+    vec4 a = imageLoad(level_READ, mul_pos);
+    vec4 b = imageLoad(level_READ, mul_pos+dx);
+    vec4 c = imageLoad(level_READ, mul_pos+dy);
+    vec4 d = imageLoad(level_READ, mul_pos+dx+dy);
+
+    vec4 m = a+b+c+d;
+
+    imageStore(level_WRITE, texelPos, m);
+
+}
