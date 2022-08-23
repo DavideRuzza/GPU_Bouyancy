@@ -1,27 +1,37 @@
 #version 460
 
-layout(binding=0) uniform sampler2D texture;
+uniform mat4 pv;
+uniform mat4 m;
+
+uniform float nlayers; // numbers of layers
+uniform float layer;   // layer to view
+uniform float clayer;  // current layer
+
+layout(binding=0) uniform sampler2D depthTex;
 
 #ifdef VERTEX_SHADER
 
 in vec3 in_position;
-in vec2 in_texcoord_0;
+in vec3 in_normal;
 
-out vec2 uv;
+out vec3 N;
+out vec3 pos;
 
 void main(){
-    gl_Position = vec4(in_position, 1.0);
-    uv =in_texcoord_0;
+    gl_Position = pv*m*vec4(in_position, 1.0);
+    N = normalize(in_normal);
 }
 
 #elif FRAGMENT_SHADER
 
-in vec2 uv;
-out vec4 fragColor;
-
+in vec3 N;
+layout(location = 0) out vec4 fragOut;
 
 void main(){
-    fragColor = texture2D(texture, uv);
+    vec2 UV = gl_FragCoord.xy/128.;
+    UV.x = UV.x/nlayers - (clayer-layer)/nlayers;
+    fragOut = texture(depthTex, UV);
+
 }
 
 #endif
