@@ -2,7 +2,7 @@
 
 layout(local_size_x=16, local_size_y=16) in;
 
-layout(r32f, binding=0) readonly uniform image2D tex_READ;
+layout(rgba32f, binding=0) readonly uniform image2D tex_READ;
 layout(rgba32f, binding=1) uniform image2D tex_WRITE;
 
 void main()

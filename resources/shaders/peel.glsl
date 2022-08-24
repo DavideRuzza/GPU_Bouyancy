@@ -10,6 +10,9 @@ uniform float clayer;  // current layer
 uniform float size;
 uniform int calc_water_surf;
 
+uniform float dx;
+uniform float dy;
+
 layout(binding=0) uniform sampler2D depthTex;
 layout(binding=1) uniform sampler2D normTex;
 
@@ -25,12 +28,15 @@ void main(){
     gl_Position = proj*view*model*vec4(in_position, 1.0);
     N = mat3(transpose(inverse(model))) * in_normal;
     N = normalize(N);
+    pos = vec3(model*vec4(in_position, 1.0));
 }
 
 #elif FRAGMENT_SHADER
 
 in vec3 N;
+in vec3 pos;
 layout(location = 0) out vec4 fragOut;
+layout(location = 1) out vec4 fragOut1;
 
 void main(){
 
@@ -47,7 +53,12 @@ void main(){
             if (normal.z > 0 || depth > 0.99) {
                 discard;
             }
+
+            float c = sign(N.z) * pos.z;
+
+            // (rx, ry, rz, V)
             fragOut = vec4(N, 1.0);
+            fragOut1 = vec4(c*pos, c)*dx*dy;
             
         } else {
 
@@ -56,7 +67,12 @@ void main(){
             if (gl_FragCoord.z<=depth){
                 discard;
             }
+
+            float c = sign(N.z) * pos.z;
+
+            // (rx, ry, rz, V)
             fragOut = vec4(N, 1.0);
+            fragOut1 = vec4(c*pos, c)*dx*dy;
         }
 
     }
