@@ -1,3 +1,4 @@
+from hmac import new
 import moderngl as mgl
 import moderngl_window as mglw
 from moderngl_window.geometry import quad_fs, quad_2d, cube, sphere
@@ -66,7 +67,8 @@ class Window(mglw.WindowConfig):
     log_level = logging.ERROR
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
+        
+        
         # ------------------------------------ INITIALIZATION
         self.N = 128
         self.size = (self.N, self.N)
@@ -75,7 +77,7 @@ class Window(mglw.WindowConfig):
         
         self.x_size = [-1.0, 1.0]
         self.y_size = [-1.0, 1.0]
-        self.orto_proj = m44.orthogonal_projection(*self.x_size, *self.y_size, -2, 2)
+        self.orto_proj = m44.orthogonal_projection(*self.x_size, *self.y_size, -5, 5)
         self.pers_proj = m44.perspective_projection(70, self.aspect_ratio, 0.1, 40)
         self.orto_view = m44.look_at(np.array([0, 0, 1]), np.array([0, 0, 0]), np.array([0, -1, 0]))
         self.pers_view = m44.look_at(np.array([2, 2, 2]), np.array([0, 0, 0]), np.array([0, 0, 1]))
@@ -103,10 +105,13 @@ class Window(mglw.WindowConfig):
         self.box = cube()
         self.sph = sphere(0.5)
 
-        self.bunny_model = m44.from_translation([0.0,0,0])*m44.from_x_rotation(-np.radians(0))
-        self.plane_model = m44.from_translation([0,0,0.0])*m44.from_x_rotation(np.radians(0))
-        # --------------------------------------------------------------------- PROGRAMS
+        # self.bunny = self.sph
 
+        self.bunny_model = m44.from_translation([0.0,0,0])*m44.from_x_rotation(-np.radians(0))
+        self.plane_model = m44.from_translation([0,0,-0.6])*m44.from_x_rotation(np.radians(0))
+        
+
+        # --------------------------------------------------------------------- PROGRAMS
         self.int_comp = self.load_compute_shader("compute/integral_reduce.comp")
         self.sum_comp = self.load_compute_shader("compute/add_layers.comp")
 
@@ -117,24 +122,17 @@ class Window(mglw.WindowConfig):
 
         
         # ----------------------------- UNIFORMS
-        self.simple3d_prog["proj"].write((self.orto_proj).astype('f4'))
-        self.peel_prog["proj"].write((self.orto_proj).astype('f4'))
-
-        self.simple3d_prog["view"].write((self.orto_view).astype('f4'))
-        self.peel_prog["view"].write((self.orto_view).astype('f4'))
-
         dx = np.abs(self.x_size[0]-self.x_size[1])/self.N
         dy = np.abs(self.y_size[0]-self.y_size[1])/self.N
 
         self.peel_prog["size"].value = self.N
-        self.peel_prog["calc_water_surf"].value = 0
         self.peel_prog["dx"].value = dx
         self.peel_prog["dy"].value = dy
 
         # ---------------- LAYERED TEXTURE FB
         # create texture with size height x n*width
         # every width is a layer
-        self.max_layer = 6
+        self.max_layer = 7
         
         # ---------------------- OFF SCREEN FRAMEBUFFER
         self.depth_tex = self.ctx.depth_texture((self.N*self.max_layer, self.N))
@@ -146,6 +144,7 @@ class Window(mglw.WindowConfig):
 
         self.fb = self.ctx.framebuffer(color_attachments=[self.tex, self.mass_tex], depth_attachment=self.depth_tex)
         self.scissor = self.fb.scissor
+        self.viewport = self.fb.viewport
 
         #---------------------- COPY FRAMEBUFFER
         self.copy_tex = self.ctx.texture((self.N*self.max_layer, self.N), components=4, dtype='f4')
@@ -160,18 +159,31 @@ class Window(mglw.WindowConfig):
         self.temp_tex.filter = mgl.NEAREST, mgl.NEAREST
         self.temp_fb = self.ctx.framebuffer(color_attachments=(self.temp_tex))
 
-        ###--------------------------------------------------------------- START PEELING
-        # ------ FIRST LAYER
+        self.bunny_prop = self.calc_mass_prop(self.bunny, self.bunny_model, self.plane, m44.from_translation([0, 0, 2]))
+        print(self.bunny_prop)
+        print("ok")
 
-        self.fb.clear(0, 0, 0)
+        self.b_pos = np.array([0., 0., 0.])
+        self.b_vel = np.array([0., 0., 0.])
+        self.b_acc = np.array([0., 0., 0.])
+
+
+    def calc_mass_prop(self, scene:VAO, scene_model:m44, surf:VAO, surf_model:m44):
+        ############### ---------------------------------------------------------------------------------------------- CALC MASS PROP
+        # ------ FIRST LAYER
+        self.peel_prog["proj"].write(self.orto_proj.astype('f4'))
+        self.peel_prog["view"].write(self.orto_view.astype('f4'))
+        self.peel_prog["calc_water_surf"].value = 0
+
+        self.fb.clear()
         self.fb.use()
         self.fb.viewport = (0, 0, self.N, self.N)
-        self.peel_prog['model'].write(self.plane_model.astype('f4'))
-        self.plane.render(self.peel_prog)
+        self.peel_prog['model'].write(surf_model.astype('f4'))
+        surf.render(self.peel_prog)
 
         # -------------- PEELS
         for i in range(self.max_layer):
-            self.peel(i, self.bunny, self.bunny_model)
+            self.peel(i, scene, scene_model)
 
         # ------------ WATER_SURF
         self.copy_fb.clear()
@@ -180,19 +192,21 @@ class Window(mglw.WindowConfig):
         self.depth_tex.use(0)
         self.quad.render(self.debug_prog)
         self.depth_tex.compare_func="<"
+
         
-        self.fb.use()
         self.fb.viewport = (0, 0, self.N, self.N)
         self.fb.scissor = (0, 0, self.N, self.N)
+        
+        self.fb.use()
         self.fb.clear()
-        self.peel_prog['model'].write(self.plane_model.astype('f4'))
+        self.peel_prog['model'].write(surf_model.astype('f4'))
         self.peel_prog["calc_water_surf"].value = 1
         set_uniform(self.peel_prog, [{'nlayers': self.max_layer, 'layer':1, 'clayer':0}, {}])
         self.depth_tex.use(0)
         self.tex.use(1)
-        self.plane.render(self.peel_prog)
+        surf.render(self.peel_prog)
         self.fb.scissor = self.scissor
-        ### ------------------------------------------------------------------ END PEELING
+        self.fb.viewport = self.viewport
 
         # ------------------------------ ADD ALL LAYERS
         self.mass_tex.bind_to_image(0)
@@ -207,13 +221,9 @@ class Window(mglw.WindowConfig):
         mass_prop[0] /= mass_prop[3] # rx = 1/V | n_z*z*x dxdy
         mass_prop[1] /= mass_prop[3] # ry = 1/V | n_z*z*y dxdy
         mass_prop[2] /= 2*mass_prop[3] # rz = 1/2V | n_z*z*z dxdy
-        print("rx: {:.3f}  ry: {:.3f}  rz: {:.3f}  V: {:.3f}".format(*mass_prop))
-        
-        
-        # print(unpack('ffff', self.integrated))
 
-        ########--------------------------------------------------------------------------------------------########
-
+        return mass_prop
+        
     def peel(self, layer: int, scene: VAO, model: m44):
         # ---------- PEEL
         self.copy_fb.clear()
@@ -249,9 +259,35 @@ class Window(mglw.WindowConfig):
 
 
     def render(self, t, dt):
+        # ----------------------------------- MASS PROP
+        self.rhoL = 1.0
+        self.rhoM = 0.6
+
+        mass_prop = self.calc_mass_prop(self.bunny, self.bunny_model, self.plane, self.plane_model)
+        m = self.rhoM*self.bunny_prop[3]
+
+        # ----- FORCE CALC
+        Fm = m*-9.81  # Body force
+        Fb = self.rhoL*mass_prop[3]*9.81 # Buoyancy Force
+        in_water = 1 if mass_prop[3] > 0 else 0
+        Fd = -in_water*1*self.b_vel*np.abs(self.b_vel) - in_water*0.4*self.b_vel #Drag force  - a*v^2 - b*v  v^2 term for fast motion, v term for quasi static motion  
+        F = np.array([0, 0, Fm+Fb])+Fd
+
+        # ------ VERLET INTEGRATION
+        # https://en.wikipedia.org/wiki/Verlet_integration
+        new_pos = self.b_pos + self.b_vel*dt + self.b_acc*(dt*dt*0.5)
+        new_acc = F/m
+        new_vel = self.b_vel + (self.b_acc+new_acc)*(dt*0.5)
         
-        self.ctx.clear(0.1, 0.1, 0.1)
+        self.b_pos = new_pos
+        self.b_vel = new_vel
+        self.b_acc = new_acc
+
+
+        # ------------ APPLY POSITION
+        self.bunny_model = m44.from_translation(self.b_pos)
         self.wnd.fbo.use()
+        
         self.ctx.disable(mgl.CULL_FACE)
         self.ctx.enable(mgl.DEPTH_TEST)
 
