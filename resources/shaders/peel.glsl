@@ -36,7 +36,10 @@ void main(){
 in vec3 N;
 in vec3 pos;
 layout(location = 0) out vec4 fragOut;
+
 layout(location = 1) out vec4 fragOut1;
+layout(location = 2) out vec4 fragOut2;
+layout(location = 3) out vec4 fragOut3;
 
 void main(){
 
@@ -56,9 +59,17 @@ void main(){
 
             float c = sign(N.z) * pos.z;
 
-            // (rx, ry, rz, V)
             fragOut = vec4(N, 1.0);
-            fragOut1 = vec4(c*pos, c)*dx*dy;
+
+            // (rx, ry, rz, V)
+            fragOut1 = vec4(c*pos, c) *dx*dy;
+
+            // (Ixx, Ixy, Ixz, .)
+            fragOut2 = pos.x * vec4(c*pos, 0.0) *dx*dy;
+
+            // (Iyy, Iyz, Izz, .)
+            fragOut3 = c * vec4(pos.y*pos.y, pos.y*pos.z, pos.z*pos.z, 0.0) *dx*dy;
+
             
         } else {
 
@@ -69,10 +80,17 @@ void main(){
             }
 
             float c = sign(N.z) * pos.z;
+            
+            fragOut = vec4(N, 1.0);
 
             // (rx, ry, rz, V)
-            fragOut = vec4(N, 1.0);
-            fragOut1 = vec4(c*pos, c)*dx*dy;
+            fragOut1 = vec4(c*pos, c) *dx*dy;
+
+            // (Ixx, Ixy, Ixz, .)
+            fragOut2 = pos.x * vec4(c*pos, 0.0) *dx*dy;
+
+            // (Iyy, Iyz, Izz, .)
+            fragOut3 = c * vec4(pos.y*pos.y, pos.y*pos.z, pos.z*pos.z, 0.0) *dx*dy;
         }
 
     }

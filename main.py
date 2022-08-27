@@ -1,12 +1,15 @@
 from hmac import new
+from re import S
 import moderngl as mgl
 import moderngl_window as mglw
 from moderngl_window.geometry import quad_fs, quad_2d, cube, sphere
 import numpy as np
 from struct import unpack
 from pyrr import Matrix44 as m44
+from pyrr import Matrix33 as m33
 from moderngl_window.opengl.vao import VAO
 import logging
+
 
 class Surface:
 
@@ -70,14 +73,14 @@ class Window(mglw.WindowConfig):
         
         
         # ------------------------------------ INITIALIZATION
-        self.N = 128
+        self.N = 64
         self.size = (self.N, self.N)
         gs = 16
         self.nxyz = [int(self.N/gs), int(self.N/gs), 1] # layout size
         
-        self.x_size = [-1.0, 1.0]
-        self.y_size = [-1.0, 1.0]
-        self.orto_proj = m44.orthogonal_projection(*self.x_size, *self.y_size, -5, 5)
+        self.x_size = [-1.1, 1.1]
+        self.y_size = [-1.1, 1.1]
+        self.orto_proj = m44.orthogonal_projection(*self.x_size, *self.y_size, -8, 8)
         self.pers_proj = m44.perspective_projection(70, self.aspect_ratio, 0.1, 40)
         self.orto_view = m44.look_at(np.array([0, 0, 1]), np.array([0, 0, 0]), np.array([0, -1, 0]))
         self.pers_view = m44.look_at(np.array([2, 2, 2]), np.array([0, 0, 0]), np.array([0, 0, 1]))
@@ -102,13 +105,12 @@ class Window(mglw.WindowConfig):
         self.bunny: VAO = self.load_scene("scenes/bunny.obj").meshes[0].vao
         self.monkey: VAO = self.load_scene("scenes/monkey.obj").meshes[0].vao
         self.plane = quad_2d(size=(10, 10), uvs=False)
-        self.box = cube()
+        self.box = cube((1.5, 1.5, 0.2))
         self.sph = sphere(0.5)
 
-        # self.bunny = self.sph
-
-        self.bunny_model = m44.from_translation([0.0,0,0])*m44.from_x_rotation(-np.radians(0))
-        self.plane_model = m44.from_translation([0,0,-0.6])*m44.from_x_rotation(np.radians(0))
+        self.bunny = self.monkey
+        self.bunny_model = m44.from_translation([0.0,0,0])*m44.from_scale([2, 1, 1])
+        self.plane_model = m44.from_translation([0,0,0.0])
         
 
         # --------------------------------------------------------------------- PROGRAMS
@@ -139,10 +141,11 @@ class Window(mglw.WindowConfig):
         self.tex = self.ctx.texture((self.N*self.max_layer, self.N), components=4, dtype='f4')
         self.tex.filter = mgl.NEAREST, mgl.NEAREST
 
-        self.mass_tex = self.ctx.texture((self.N*self.max_layer, self.N), components=4, dtype='f4')
-        self.mass_tex.filter = mgl.NEAREST, mgl.NEAREST
+        self.mass_tex = self.ctx.texture((self.N*self.max_layer, self.N), components=4, dtype='f4') # rx, ry, rz, V
+        self.mass_tex1 = self.ctx.texture((self.N*self.max_layer, self.N), components=4, dtype='f4') # Ixx, Ixy, Ixz
+        self.mass_tex2 = self.ctx.texture((self.N*self.max_layer, self.N), components=4, dtype='f4') # Ixz, Iyz, Izz
 
-        self.fb = self.ctx.framebuffer(color_attachments=[self.tex, self.mass_tex], depth_attachment=self.depth_tex)
+        self.fb = self.ctx.framebuffer(color_attachments=[self.tex, self.mass_tex, self.mass_tex1, self.mass_tex2], depth_attachment=self.depth_tex)
         self.scissor = self.fb.scissor
         self.viewport = self.fb.viewport
 
@@ -161,12 +164,16 @@ class Window(mglw.WindowConfig):
 
         self.bunny_prop = self.calc_mass_prop(self.bunny, self.bunny_model, self.plane, m44.from_translation([0, 0, 2]))
         print(self.bunny_prop)
-        print("ok")
 
-        self.b_pos = np.array([0., 0., 0.])
-        self.b_vel = np.array([0., 0., 0.])
-        self.b_acc = np.array([0., 0., 0.])
+        self.b_ang = np.array([0,0,0], dtype='f4')
+        self.b_ang_vel = np.array([0,0,0], dtype='f4')
+        self.b_ang_acc = np.array([0,0,0], dtype='f4')
 
+        self.b_pos = np.array([0,0,0.0], dtype='f4')
+        self.b_vel = np.array([0,0,0], dtype='f4')
+        self.b_acc = np.array([0,0,0], dtype='f4')
+        
+        # self.b_ang[0] += np.pi/2
 
     def calc_mass_prop(self, scene:VAO, scene_model:m44, surf:VAO, surf_model:m44):
         ############### ---------------------------------------------------------------------------------------------- CALC MASS PROP
@@ -208,21 +215,51 @@ class Window(mglw.WindowConfig):
         self.fb.scissor = self.scissor
         self.fb.viewport = self.viewport
 
-        # ------------------------------ ADD ALL LAYERS
+        # ------------------------------ ADD LAYERS AND INTEGRATE
+
+        # ------------- RX, RY, RZ, V
         self.mass_tex.bind_to_image(0)
         self.temp_tex.bind_to_image(1)
         self.sum_comp['nlayers'].value = self.max_layer
         self.sum_comp.run(*self.nxyz)
-        
-        # ------------------------ INTEGRATE ALL summed layer
 
         self.integrated = self.find_sum(self.temp_tex)
         mass_prop = np.array(unpack('ffff', self.integrated), dtype='f4')
-        mass_prop[0] /= mass_prop[3] # rx = 1/V | n_z*z*x dxdy
-        mass_prop[1] /= mass_prop[3] # ry = 1/V | n_z*z*y dxdy
-        mass_prop[2] /= 2*mass_prop[3] # rz = 1/2V | n_z*z*z dxdy
 
-        return mass_prop
+        V = mass_prop[3]
+        rx = mass_prop[0]/V
+        ry = mass_prop[1]/V
+        rz = mass_prop[2]/2/V
+
+        # ------------- Ixx, Ixy, Ixz
+        self.mass_tex1.bind_to_image(0)
+        self.temp_tex.bind_to_image(1)
+        self.sum_comp['nlayers'].value = self.max_layer
+        self.sum_comp.run(*self.nxyz)
+
+        self.integrated = self.find_sum(self.temp_tex)
+        mass_prop = np.array(unpack('ffff', self.integrated), dtype='f4')
+        Ixx = mass_prop[0]
+        Ixy = mass_prop[1]
+        Ixz = mass_prop[2]/2
+
+        # ------------- Iyy, Iyz, Izz,
+        self.mass_tex2.bind_to_image(0)
+        self.temp_tex.bind_to_image(1)
+        self.sum_comp['nlayers'].value = self.max_layer
+        self.sum_comp.run(*self.nxyz)
+
+        self.integrated = self.find_sum(self.temp_tex)
+        mass_prop = np.array(unpack('ffff', self.integrated), dtype='f4')
+        Iyy = mass_prop[0]
+        Iyz = mass_prop[1]/2
+        Izz = mass_prop[2]/3
+
+        
+        I = m33([[Ixx, -Ixy, -Ixz], [-Ixy, Iyy, -Iyz], [-Ixz, -Iyz, Izz]], dtype='f4')
+
+
+        return V, rx, ry, rz, I
         
     def peel(self, layer: int, scene: VAO, model: m44):
         # ---------- PEEL
@@ -240,7 +277,6 @@ class Window(mglw.WindowConfig):
         self.copy_tex.use(0)
         scene.render(self.peel_prog)
 
-    # -----------
     def find_sum(self, texIn: mgl.Texture):
         # find integral of texture summ all values
         iters = self.log2N
@@ -257,24 +293,61 @@ class Window(mglw.WindowConfig):
             self.int_comp.run(gs, gs, 1)
         return self.sum_tex_arr[-1].read()
 
+    def RotMat33(self):
+        return m33.from_x_rotation(self.b_ang[0])*m33.from_y_rotation(self.b_ang[1])*m33.from_z_rotation(self.b_ang[2])
+    
+    def RotMat44(self):
+        return m44.from_x_rotation(self.b_ang[0])*m44.from_y_rotation(self.b_ang[1])*m44.from_z_rotation(self.b_ang[2])
 
     def render(self, t, dt):
         # ----------------------------------- MASS PROP
-        self.rhoL = 1.0
-        self.rhoM = 0.6
+        self.rhoL = 1.0 # mass of the liquid
+        self.rhoM = 0.4 # mass of the object
+        g = 9.81 # gravity
 
-        mass_prop = self.calc_mass_prop(self.bunny, self.bunny_model, self.plane, self.plane_model)
-        m = self.rhoM*self.bunny_prop[3]
+        # Initial bunny mass properties
+        V, rx, ry, rz, I = self.calc_mass_prop(self.bunny, self.bunny_model, self.plane, m44.from_translation([0, 0, 3]))
+        I = self.rhoM*I
+        
+        
+        # Mass properties of immerged part
+        Vi, rxi, ryi, rzi, _ = self.calc_mass_prop(self.bunny, self.bunny_model, self.plane, self.plane_model)
 
+
+        m = self.rhoM*V # mass of the full object
         # ----- FORCE CALC
-        Fm = m*-9.81  # Body force
-        Fb = self.rhoL*mass_prop[3]*9.81 # Buoyancy Force
-        in_water = 1 if mass_prop[3] > 0 else 0
+        Fm = np.array([0, 0, -m*g])  # Body force
+        Fb = np.array([0, 0, self.rhoL*Vi*g]) # Buoyancy Force
+        
+        in_water = 1 if Vi > 0 else 0
         Fd = -in_water*1*self.b_vel*np.abs(self.b_vel) - in_water*0.4*self.b_vel #Drag force  - a*v^2 - b*v  v^2 term for fast motion, v term for quasi static motion  
-        F = np.array([0, 0, Fm+Fb])+Fd
+        F = Fm+Fb+Fd*self.rhoL
 
-        # ------ VERLET INTEGRATION
+        # HELP: https://physics.stackexchange.com/questions/688426/compute-angular-acceleration-from-torque-in-3d
+        # arm of the force to calculate torque  T = r x Fb
+        # distance between object G point and immerged G point
+        r = np.array([rxi-rx, ryi-rx, rzi-rz])
+        tau = -np.cross(r, Fb)
+        tau_drag = -0.1*self.b_ang_vel - 0.3*self.b_ang_vel*np.linalg.norm(self.b_ang_vel)
+        new_ang_acc = np.array(np.linalg.inv(I) @ (tau+tau_drag- np.cross(self.b_ang_vel, I@self.b_ang_vel)))
+        # - np.cross(self.b_ang_vel, I@self.b_ang_vel)
+        # print(tau)
+        # print(new_ang_acc.shape)
+        
+        # ------------ APPLY POSITION AND ROTATION
+        self.bunny_model = m44.from_translation(self.b_pos)*self.RotMat44()
+
+        # ------------------------------------------------ VERLET INTEGRATION
         # https://en.wikipedia.org/wiki/Verlet_integration
+
+        # ANGULAR MOTION
+        new_ang = self.b_ang + self.b_ang_vel*dt + self.b_ang_acc*(dt*dt*0.05)
+        new_ang_vel = self.b_ang_vel + (self.b_ang_acc+new_ang_acc)*(dt*0.05)
+        self.b_ang = new_ang
+        self.b_ang_vel = new_ang_vel
+        self.b_ang_acc = new_ang_acc
+
+        # LINEAR MOTION
         new_pos = self.b_pos + self.b_vel*dt + self.b_acc*(dt*dt*0.5)
         new_acc = F/m
         new_vel = self.b_vel + (self.b_acc+new_acc)*(dt*0.5)
@@ -283,9 +356,8 @@ class Window(mglw.WindowConfig):
         self.b_vel = new_vel
         self.b_acc = new_acc
 
+        #########################àà
 
-        # ------------ APPLY POSITION
-        self.bunny_model = m44.from_translation(self.b_pos)
         self.wnd.fbo.use()
         
         self.ctx.disable(mgl.CULL_FACE)
@@ -306,9 +378,9 @@ class Window(mglw.WindowConfig):
         self.tex.use(0)
         self.quad.render(self.debug_prog)
 
-        self.wnd.fbo.viewport = (self.window_size[0]-self.N*2, 0, 2*self.N, 2*self.N)
-        self.temp_tex.use()
-        self.quad.render(self.debug_prog)
+        # self.wnd.fbo.viewport = (self.window_size[0]-self.N*2, 0, 2*self.N, 2*self.N)
+        # self.temp_tex.use()
+        # self.quad.render(self.debug_prog)
         
 
 Window.run()
