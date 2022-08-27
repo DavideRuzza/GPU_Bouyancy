@@ -11,6 +11,7 @@ from moderngl_window.opengl.vao import VAO
 import logging
 
 
+
 class Surface:
 
     def __init__(self, ctx, size, dtype='f4'):
@@ -63,7 +64,7 @@ def set_uniform(program:mgl.Program, uniforms: list):
 
 class Window(mglw.WindowConfig):
     gl_version = (4, 6)
-    window_size = (2*512, 512)
+    window_size = (500, 500)
     resizable = False
     resource_dir = "resources/"
     aspect_ratio = window_size[0]/window_size[1]
@@ -73,7 +74,7 @@ class Window(mglw.WindowConfig):
         
         
         # ------------------------------------ INITIALIZATION
-        self.N = 64
+        self.N = 128
         self.size = (self.N, self.N)
         gs = 16
         self.nxyz = [int(self.N/gs), int(self.N/gs), 1] # layout size
@@ -108,9 +109,9 @@ class Window(mglw.WindowConfig):
         self.box = cube((1.5, 1.5, 0.2))
         self.sph = sphere(0.5)
 
-        self.bunny = self.monkey
-        self.bunny_model = m44.from_translation([0.0,0,0])*m44.from_scale([2, 1, 1])
-        self.plane_model = m44.from_translation([0,0,0.0])
+        # self.bunny = self.monkey
+        self.bunny_model = m44.from_translation([0.0,0,0])
+        self.plane_model = m44.from_translation([0,0,-0.1])
         
 
         # --------------------------------------------------------------------- PROGRAMS
@@ -169,11 +170,11 @@ class Window(mglw.WindowConfig):
         self.b_ang_vel = np.array([0,0,0], dtype='f4')
         self.b_ang_acc = np.array([0,0,0], dtype='f4')
 
-        self.b_pos = np.array([0,0,0.0], dtype='f4')
+        self.b_pos = np.array([0,0,0.5], dtype='f4')
         self.b_vel = np.array([0,0,0], dtype='f4')
         self.b_acc = np.array([0,0,0], dtype='f4')
         
-        # self.b_ang[0] += np.pi/2
+
 
     def calc_mass_prop(self, scene:VAO, scene_model:m44, surf:VAO, surf_model:m44):
         ############### ---------------------------------------------------------------------------------------------- CALC MASS PROP
@@ -320,15 +321,15 @@ class Window(mglw.WindowConfig):
         Fb = np.array([0, 0, self.rhoL*Vi*g]) # Buoyancy Force
         
         in_water = 1 if Vi > 0 else 0
-        Fd = -in_water*1*self.b_vel*np.abs(self.b_vel) - in_water*0.4*self.b_vel #Drag force  - a*v^2 - b*v  v^2 term for fast motion, v term for quasi static motion  
+        Fd = -in_water*1*self.b_vel*np.abs(self.b_vel) - in_water*0.6*self.b_vel #Drag force  - a*v^2 - b*v  v^2 term for fast motion, v term for quasi static motion  
         F = Fm+Fb+Fd*self.rhoL
 
         # HELP: https://physics.stackexchange.com/questions/688426/compute-angular-acceleration-from-torque-in-3d
         # arm of the force to calculate torque  T = r x Fb
         # distance between object G point and immerged G point
-        r = np.array([rxi-rx, ryi-rx, rzi-rz])
+        r = np.array([rxi-rx, ryi-ry, rzi-rz])
         tau = -np.cross(r, Fb)
-        tau_drag = -0.1*self.b_ang_vel - 0.3*self.b_ang_vel*np.linalg.norm(self.b_ang_vel)
+        tau_drag = -0.3*self.b_ang_vel - 0.6*self.b_ang_vel*np.linalg.norm(self.b_ang_vel)
         new_ang_acc = np.array(np.linalg.inv(I) @ (tau+tau_drag- np.cross(self.b_ang_vel, I@self.b_ang_vel)))
         # - np.cross(self.b_ang_vel, I@self.b_ang_vel)
         # print(tau)
@@ -373,14 +374,12 @@ class Window(mglw.WindowConfig):
         self.simple3d_prog['model'].write(self.bunny_model.astype('f4'))
         self.bunny.render(self.simple3d_prog)
 
-
-        self.wnd.fbo.viewport = (0, 0, self.max_layer*self.N, self.N)
-        self.tex.use(0)
-        self.quad.render(self.debug_prog)
+        # self.wnd.fbo.viewport = (0, 0, self.max_layer*self.N, self.N)cls
+        # self.tex.use(0)
+        # self.quad.render(self.debug_prog)
 
         # self.wnd.fbo.viewport = (self.window_size[0]-self.N*2, 0, 2*self.N, 2*self.N)
         # self.temp_tex.use()
         # self.quad.render(self.debug_prog)
-        
 
 Window.run()
